@@ -127,6 +127,38 @@ button.ov-row:hover .ov-name{color:var(--accent);text-decoration:underline}
 .prog .shot{margin-top:8px}
 .empty-note{color:var(--muted);font-size:14px;padding:6px 0}
 
+/* calendar */
+.cal{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px 16px}
+.cal-h{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.cal-h h2{font:600 16px/1.4 var(--font-display);margin-right:auto}
+.cal-h .btn{padding:2px 12px}
+.cal-scroll{overflow-x:auto}
+.cal-grid{display:grid;grid-template-columns:40px repeat(7,minmax(84px,1fr));min-width:700px;border-top:1px solid var(--line);border-left:1px solid var(--line)}
+.cal-grid>div{border-right:1px solid var(--line);border-bottom:1px solid var(--line);min-width:0}
+.cal-dow{padding:4px 6px;font:600 12px var(--font-display);color:var(--muted);background:var(--neutral-soft)}
+.cal-wk{padding:6px 4px;font:500 11px var(--font-mono);color:var(--muted);background:var(--neutral-soft);text-align:center}
+.cal-wk.rw{background:var(--accent);color:var(--accent-ink)}
+.cal-day{min-height:92px;padding:4px;display:flex;flex-direction:column;gap:3px}
+.cal-day.out{background:var(--neutral-soft);opacity:.55}
+.cal-day.rw{background:var(--accent-soft)}
+.cal-day .n{font:500 12px var(--font-mono);color:var(--muted)}
+.cal-day.today .n{color:var(--accent-ink);background:var(--accent);border-radius:99px;padding:0 6px;align-self:flex-start}
+.chip-ev{display:block;width:100%;text-align:left;font:400 11px/1.35 var(--font-body);color:var(--ink);border:0;border-left:3px solid var(--accent);border-radius:3px;padding:2px 5px;background:var(--neutral-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+.chip-ev.p-S8P{border-left-color:var(--warn)}
+.chip-ev.solved{background:var(--good-soft)} .chip-ev.inprogress{background:var(--accent-soft)} .chip-ev.open{background:var(--bad-soft)}
+.chip-ev b{font-weight:600;margin-right:3px}
+.chip-ev.upd{font-style:italic}
+div.chip-ev{cursor:default}
+.cal-more{font-size:11px;color:var(--muted)}
+.cal-key{display:flex;gap:6px 14px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-top:8px;align-items:center}
+.cal-key i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+.flash{outline:3px solid var(--accent);outline-offset:2px;transition:outline-color .6s}
+/* red issues */
+.cell.issue{background:var(--bad-soft);box-shadow:inset 4px 0 0 var(--bad)}
+.cell.issue .lab{color:var(--bad);font-weight:600}
+.cell.issue .t{color:var(--bad)}
+.stat.red b{color:var(--bad)}
+.chip-ev.iss{background:var(--bad-soft);color:var(--bad);font-weight:500;box-shadow:inset 0 0 0 1px var(--bad)}
 /* progress log */
 .log{margin-top:10px;border-top:1px dashed var(--line);padding-top:8px}
 .log-h{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:4px}
@@ -193,6 +225,7 @@ button.ov-row:hover .ov-name{color:var(--accent);text-decoration:underline}
 
   <div id="banner"></div>
   <section id="overview" aria-labelledby="ov-h"></section>
+  <section id="calendar" aria-label="Weekly calendar"></section>
 
   <div class="toolbar">
     <div class="chips" id="chips" role="group" aria-label="Choose product"></div>
@@ -211,6 +244,7 @@ button.ov-row:hover .ov-name{color:var(--accent);text-decoration:underline}
 "use strict";
 var PRODUCTS=['S8U','S8P'];
 var ST=['solved','inprogress','open','info'];
+var MON_FULL=['January','February','March','April','May','June','July','August','September','October','November','December'];
 var MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 var LABEL={
   issue:{solved:'Solved',inprogress:'In progress',open:'Open',info:'Info'},
@@ -400,8 +434,8 @@ function statsOf(r){
 }
 function renderStats(r){
   var s=statsOf(r);
-  function st(v,l){return h('div',{class:'stat'},h('b',{text:String(v)}),h('span',{text:l}));}
-  return h('div',{class:'stats'},st(s.all,'Topics'),st(s.iss,'Issues'),st(s.solved,'Issues solved'),st(s.pend,'Issues open'),st(s.upd,'Progress topics'),st(s.logs,'Updates logged'));
+  function st(v,l,red){return h('div',{class:'stat'+(red?' red':'')},h('b',{text:String(v)}),h('span',{text:l}));}
+  return h('div',{class:'stats'},st(s.all,'Topics'),st(s.iss,'Issues',1),st(s.solved,'Issues solved'),st(s.pend,'Issues open',1),st(s.upd,'Progress topics'),st(s.logs,'Updates logged'));
 }
 function renderMeta(r){
   var parts=[];
@@ -421,6 +455,76 @@ function renderOverview(r,interactive){
   return h('div',null,h('h2',{class:'sec-title',id:'ov-h',text:'Overview by product'}),rows);
 }
 
+var calMonth=null;
+function pad2(n){return ('0'+n).slice(-2);}
+function dIso(d){return d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate());}
+function isoWeek(d){var x=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate())); var day=x.getUTCDay()||7; x.setUTCDate(x.getUTCDate()+4-day); var y0=new Date(Date.UTC(x.getUTCFullYear(),0,1)); return Math.ceil(((x-y0)/86400000+1)/7);}
+function parseIso(s){var m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(s||''); return m?new Date(+m[1],+m[2]-1,+m[3]):null;}
+function weekStart(d){var x=new Date(d.getFullYear(),d.getMonth(),d.getDate()); x.setDate(x.getDate()-((x.getDay()+6)%7)); return x;}
+function calEvents(r){
+  var ev={};
+  function add(date,o){if(!date) return; (ev[date]=ev[date]||[]).push(o);}
+  r.products.forEach(function(p,pi){p.items.forEach(function(it){
+    add(it.date,{p:p.name,pi:pi,t:it.topic||it.issue,st:effStatus(it),key:it.key,u:false,iss:!!it.issue});
+    updatesFor(it).forEach(function(u){add(u.date,{p:p.name,pi:pi,t:u.note,st:u.status,key:it.key,u:true,iss:false});});
+  });});
+  return ev;
+}
+function calDefaultMonth(r,ev){
+  var d=parseIso(r.reportDate); var keys=Object.keys(ev).sort();
+  if(keys.length){var a=parseIso(keys[0]); if(a) d=a;}
+  d=d||new Date(); return {y:d.getFullYear(),m:d.getMonth()};
+}
+function jumpTo(ev){
+  var idx=ev.pi; if(selected!=='all'&&selected!==idx) selected=idx;
+  render();
+  var el=document.getElementById('k-'+ev.key);
+  if(el){el.scrollIntoView({behavior:'smooth',block:'center'}); el.classList.add('flash'); setTimeout(function(){el.classList.remove('flash');},1800);}
+}
+function renderCalendar(r,exp){
+  var evs=calEvents(r);
+  if(!calMonth) calMonth=calDefaultMonth(r,evs);
+  var y=calMonth.y, m=calMonth.m;
+  var title=MON_FULL[m]+' '+y;
+  var rd=parseIso(r.reportDate), rws=rd?dIso(weekStart(rd)):'';
+  var head=h('div',{class:'cal-h'},h('h2',{text:'Weekly calendar · '+title}));
+  if(!exp){
+    head.append(
+      h('button',{class:'btn ghost sm',type:'button','aria-label':'Previous month',onclick:function(){calMonth=m===0?{y:y-1,m:11}:{y:y,m:m-1};render();}},'‹'),
+      h('button',{class:'btn ghost sm',type:'button',onclick:function(){calMonth=calDefaultMonth(r,evs);render();}},'Report month'),
+      h('button',{class:'btn ghost sm',type:'button','aria-label':'Next month',onclick:function(){calMonth=m===11?{y:y+1,m:0}:{y:y,m:m+1};render();}},'›'));
+  }
+  var grid=h('div',{class:'cal-grid'});
+  grid.append(h('div',{class:'cal-dow',text:'Wk'}));
+  ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].forEach(function(d){grid.append(h('div',{class:'cal-dow',text:d}));});
+  var first=new Date(y,m,1), cur=weekStart(first), last=new Date(y,m+1,0), todayIso=isoDay(), count=0;
+  while(cur<=last){
+    var wsIso=dIso(cur), isRw=(wsIso===rws);
+    grid.append(h('div',{class:'cal-wk'+(isRw?' rw':''),text:'W'+isoWeek(new Date(cur.getFullYear(),cur.getMonth(),cur.getDate()+3)),title:isRw?'Report week':null}));
+    for(var i=0;i<7;i++){
+      var d=new Date(cur.getFullYear(),cur.getMonth(),cur.getDate()+i), iso=dIso(d), list=evs[iso]||[];
+      var cell=h('div',{class:'cal-day keep'+(d.getMonth()!==m?' out':'')+(isRw?' rw':'')+(iso===todayIso?' today':'')},h('span',{class:'n',text:String(d.getDate())}));
+      list.slice(0,3).forEach(function(e){
+        var lab=[h('b',{text:e.p}),(e.iss?'Issue: ':e.u?'Update: ':'')+e.t];
+        var cls='chip-ev p-'+e.p+' '+e.st+(e.u?' upd':'')+(e.iss?' iss':'');
+        cell.append(exp?h('div',{class:cls,title:e.t},lab):h('button',{class:cls,type:'button',title:e.p+' · '+e.t,onclick:function(){jumpTo(e);}},lab));
+      });
+      if(list.length>3) cell.append(h('span',{class:'cal-more',text:'+'+(list.length-3)+' more'}));
+      grid.append(cell);
+    }
+    cur=new Date(cur.getFullYear(),cur.getMonth(),cur.getDate()+7); count++; if(count>6) break;
+  }
+  var any=Object.keys(evs).some(function(k){return k.slice(0,7)===y+'-'+pad2(m+1);});
+  var key=h('div',{class:'cal-key'},
+    h('span',null,h('i',{style:'background:var(--accent)'}),'S8U'),h('span',null,h('i',{style:'background:var(--warn)'}),'S8P'),
+    h('span',null,h('i',{style:'background:var(--bad-soft);border:1px solid var(--bad)'}),'Issue'),
+    h('span',null,h('i',{style:'background:var(--good-soft);border:1px solid var(--good)'}),'Done'),
+    h('span',null,h('i',{style:'background:var(--accent-soft);border:1px solid var(--accent)'}),'In progress'),
+    
+    h('span',null,'Highlighted row = report week'),
+    any?null:h('span',{text:'No topics in this month.'}));
+  return h('div',{class:'cal keep'},head,h('div',{class:'cal-scroll'},grid),key);
+}
 function renderLog(it,exp){
   var list=updatesFor(it);
   var box=h('div',{class:'log'});
@@ -475,22 +579,22 @@ function renderProduct(r,p,exp){
   if(iss.length){
     probBlk.append(h('div',{class:'pairs'},iss.map(function(x){
       var st=effStatus(x);
-      var left=h('div',{class:'cell'},
-        h('div',{class:'lab'},'Issue'+(x.date?' · '+fmtDate(x.date):'')),
+      var left=h('div',{class:'cell issue'},
+        h('div',{class:'lab'},pill('bad','Issue'),x.date?fmtDate(x.date):null),
         h('div',{class:'t',text:x.topic||x.issue}),
         x.topic?h('div',{class:'d',text:x.issue}):null,
         x.pages?h('div',{class:'ref',text:'Source: page '+x.pages}):null);
       var right=h('div',{class:'cell '+(x.solution||st==='solved'?st:'open none')},
         h('div',{class:'lab'},'Solution',(x.solution||updatesFor(x).length)?pill(LABEL.kind[st],LABEL.issue[st]):pill('neutral','No data')),
         h('div',{class:'t',text:x.solution||'No solution stated in the document.'}));
-      return h('div',{class:'pair keep'},left,right,h('div',{class:'extra'},shot(r,x),renderLog(x,exp)));
+      return h('div',{class:'pair keep',id:exp?null:'k-'+x.key},left,right,h('div',{class:'extra'},shot(r,x),renderLog(x,exp)));
     })));
   } else probBlk.append(h('p',{class:'empty-note',text:'No issues found in the document.'}));
   var progBlk=h('section',{class:'blk'},h('h3',{class:'keep hd',text:'Progress and updates'}));
   if(upd.length){
     upd.forEach(function(x){
       var st=effStatus(x);
-      progBlk.append(h('div',{class:'prog keep'},
+      progBlk.append(h('div',{class:'prog keep',id:exp?null:'k-'+x.key},
         h('div',{class:'dt',text:fmtDate(x.date)||'–'}),
         h('div',null,
           h('div',{class:'t',text:x.topic||x.solution}),
@@ -505,7 +609,7 @@ function renderProduct(r,p,exp){
   return h('article',{class:'sheet'},head,probBlk,progBlk);
 }
 function renderHead(r){
-  return h('div',{class:'x-head'},h('h1',{text:r.title||'Weekly Issue & Progress Report'}),renderMeta({title:'',reportDate:r.reportDate,preparedBy:r.preparedBy,files:r.files}),renderStats(r),renderOverview(r,false));
+  return h('div',{class:'x-head'},h('h1',{text:r.title||'Weekly Issue & Progress Report'}),renderMeta({title:'',reportDate:r.reportDate,preparedBy:r.preparedBy,files:r.files}),renderStats(r),renderOverview(r,false),h('div',{style:'height:14px'}),renderCalendar(r,true));
 }
 
 function render(){
@@ -516,6 +620,7 @@ function render(){
   if(store.mode==='local') banner.append(h('div',{class:'banner',text:'Updates are saved in this browser only. They are not shared with other viewers.'}));
   var ov=$('#overview'); ov.textContent='';
   ov.append(renderMeta(r),renderStats(r),h('div',{style:'height:18px'}),renderOverview(r,true));
+  var cal=$('#calendar'); cal.textContent=''; cal.append(renderCalendar(r,false));
   var chips=$('#chips'); chips.textContent='';
   function chip(label,val){return h('button',{class:'chip',type:'button','aria-pressed':String(selected===val),onclick:function(){select(val);}},label);}
   chips.append(chip('All','all'));
@@ -733,7 +838,7 @@ async function runSummary(){
   if(!n){setStatus('err','No S8U or S8P topics found. Check that slide titles name the product.');return;}
   setStatus('busy','Preparing source slides…');
   r.thumbs=await buildThumbs(r);
-  report=r; selected='all'; render();
+  report=r; selected='all'; calMonth=null; render();
   setStatus('ok','Summary ready: '+n+' topics (S8U '+r.products[0].items.length+', S8P '+r.products[1].items.length+')');
   var t=$('#overview'); if(t&&t.scrollIntoView) t.scrollIntoView({behavior:'smooth',block:'start'});
 }
