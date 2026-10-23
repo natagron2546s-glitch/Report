@@ -117,7 +117,7 @@ button.ov-row:hover .ov-name{color:var(--accent);text-decoration:underline}
 .pill{display:inline-block;font:600 12px/1.7 var(--font-body);padding:0 9px;border-radius:99px;border:1px solid currentColor;background:var(--surface);white-space:nowrap}
 .pill.bad{color:var(--bad)} .pill.good{color:var(--good)} .pill.warn{color:var(--warn)}
 .pill.accent{color:var(--accent)} .pill.neutral{color:var(--muted)}
-.prog{display:grid;grid-template-columns:104px minmax(0,1fr) auto;gap:6px 16px;padding:12px 0;border-top:1px solid var(--line);align-items:start}
+.prog{display:grid;grid-template-columns:124px minmax(0,1fr) auto;gap:6px 16px;padding:12px 0;border-top:1px solid var(--line);align-items:start}
 .prog .dt{font:500 13px/1.6 var(--font-mono);color:var(--muted)}
 .prog .t{font-weight:600;overflow-wrap:anywhere}
 .prog .d{font-size:14px;overflow-wrap:anywhere}
@@ -164,6 +164,8 @@ div.chip-ev{cursor:default}
 .wk-chip[aria-pressed="true"] small{color:var(--accent-ink);opacity:.85}
 .btn.danger{border-color:var(--bad);color:var(--bad)}
 .exp-sel{font:500 13px var(--font-body);color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:6px 8px}
+/* keep step numbering in solutions */
+.cell .t,.prog .d,.prog .t{white-space:pre-line}
 /* red issues */
 .cell.issue{background:var(--bad-soft);box-shadow:inset 4px 0 0 var(--bad)}
 .cell.issue .lab{color:var(--bad);font-weight:600}
@@ -749,6 +751,10 @@ function h(tag,props){
 }
 function str(v,max){return String(v==null?'':v).trim().slice(0,max||400);}
 function pick(v,list,def){v=String(v||'').toLowerCase().replace(/[^a-z]/g,'');return list.indexOf(v)>=0?v:def;}
+function fmtItemDate(it){
+  if(it.dateEnd&&it.dateEnd!==it.date){var a=parseIso(it.date),b=parseIso(it.dateEnd); if(a&&b) return a.getDate()+(a.getMonth()!==b.getMonth()?' '+MON[a.getMonth()]:'')+'–'+b.getDate()+' '+MON[b.getMonth()]+' '+b.getFullYear();}
+  return fmtDate(it.date);
+}
 function fmtDate(iso){
   var m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(iso||''); if(!m) return '';
   return (+m[3])+' '+MON[+m[2]-1]+' '+m[1];
@@ -779,7 +785,8 @@ function normalize(raw){
       var date=/^\d{4}-\d{2}-\d{2}$/.test(str(x.date,10))?str(x.date,10):'';
       var st=pick(x.status,ST,issue?(sol?'solved':'open'):'info');
       if(issue&&st==='info') st=sol?'solved':'open';
-      var it={date:date,topic:str(x.topic,200),issue:issue,solution:sol,next:str(x.next,400),status:st,pages:str(x.pages,40),file:str(x.file,200)};
+      var de=/^\d{4}-\d{2}-\d{2}$/.test(str(x.dateEnd,10))&&str(x.dateEnd,10)>date?str(x.dateEnd,10):'';
+      var it={date:date,dateEnd:de,topic:str(x.topic,200),issue:issue,solution:sol,next:str(x.next,400),status:st,pages:str(x.pages,40),file:str(x.file,200)};
       if(it.topic||it.issue||it.solution) t.items.push(it);
     });
   });
@@ -1018,7 +1025,8 @@ function calEvents(r){
   var ev={};
   function add(date,o){if(!date) return; (ev[date]=ev[date]||[]).push(o);}
   r.products.forEach(function(p,pi){p.items.forEach(function(it){
-    add(it.date,{p:p.name,pi:pi,t:it.topic||it.issue,st:effStatus(it),key:it.key,u:false,iss:!!it.issue});
+    var d0=parseIso(it.date), d1=parseIso(it.dateEnd||it.date), n=0;
+    if(d0){for(var d=d0;d<=(d1||d0)&&n<14;d=new Date(d.getFullYear(),d.getMonth(),d.getDate()+1),n++) add(dIso(d),{p:p.name,pi:pi,t:it.topic||it.issue,st:effStatus(it),key:it.key,u:false,iss:!!it.issue});}
     updatesFor(it).forEach(function(u){add(u.date,{p:p.name,pi:pi,t:u.note,st:u.status,key:it.key,u:true,iss:false});});
   });});
   return ev;
@@ -1133,7 +1141,7 @@ function renderProduct(r,p,exp){
     probBlk.append(h('div',{class:'pairs'},iss.map(function(x){
       var st=effStatus(x);
       var left=h('div',{class:'cell issue'},
-        h('div',{class:'lab'},pill('bad','Issue'),x.date?fmtDate(x.date):null),
+        h('div',{class:'lab'},pill('bad','Issue'),fmtItemDate(x)||null),
         h('div',{class:'t',text:x.topic||x.issue}),
         x.topic?h('div',{class:'d',text:x.issue}):null,
         x.pages?h('div',{class:'ref',text:'Source: page '+x.pages}):null);
@@ -1148,7 +1156,7 @@ function renderProduct(r,p,exp){
     upd.forEach(function(x){
       var st=effStatus(x);
       progBlk.append(h('div',{class:'prog keep',id:exp?null:'k-'+x.key},
-        h('div',{class:'dt',text:fmtDate(x.date)||'–'}),
+        h('div',{class:'dt',text:fmtItemDate(x)||'–'}),
         h('div',null,
           h('div',{class:'t',text:x.topic||x.solution}),
           x.topic&&x.solution?h('div',{class:'d',text:x.solution}):null,
@@ -1239,35 +1247,57 @@ async function buildThumbs(r){
 }
 
 /* ---------- fallback parser (used when Claude is unavailable) ---------- */
+function parseTitleDate(s){
+  /* Accepts MM/DD/YY, DD/MM/YY (day above 12) and a day range such as 16-17/10/26 (DD-DD/MM/YY). */
+  var m=/^(\d{1,2})(?:\s*[-–]\s*(\d{1,2}))?\/(\d{1,2})\/(\d{2,4})\s+(.+)$/.exec(s); if(!m) return null;
+  var a=+m[1], b=m[2]?+m[2]:null, c=+m[3], yr=m[4].length===2?2000+(+m[4]):+m[4], mo, d1, d2=null;
+  if(b!==null){d1=a;d2=b;mo=c;} else if(a>12){d1=a;mo=c;} else {mo=a;d1=c;}
+  if(mo<1||mo>12||d1<1||d1>31) return null;
+  function iso(d){return yr+'-'+('0'+mo).slice(-2)+'-'+('0'+d).slice(-2);}
+  return {date:iso(d1),dateEnd:(d2&&d2>=d1&&d2<=31)?iso(d2):'',rest:m[5]};
+}
+function splitBody(lines){
+  var issue=[], sol=[], other=[], mode=null, labelled=false;
+  lines.forEach(function(l){
+    var mi=/^(?:Issue|Problem)s?\s*(?::\s*(.*)|$)/i.exec(l), ms=/^(?:Solution|Fix|Resolution)s?\s*(?::\s*(.*)|$)/i.exec(l);
+    if(mi){mode='i';labelled=true; if(mi[1]) issue.push(mi[1]); return;}
+    if(ms){mode='s';labelled=true; if(ms[1]) sol.push(ms[1]); return;}
+    (mode==='i'?issue:mode==='s'?sol:other).push(l);
+  });
+  function join(a){return a.reduce(function(o,l){return o?(/^(?:\d+[.)]\s|[-•*]\s)/.test(l)?o+'\n'+l:o+' '+l):l;},'').trim();}
+  return {issue:join(issue),sol:join(sol),other:other,labelled:labelled};
+}
 function heuristic(pages){
-  var map={S8U:{name:'S8U',owner:'',items:[]},S8P:{name:'S8P',owner:'',items:[]}}, cur='S8U', title='', prep='';
-  var reDate=/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s+(.+)$/;
+  var map={S8U:{name:'S8U',owner:'',items:[]},S8P:{name:'S8P',owner:'',items:[]}}, cur='S8U', title='', prep='', rdate='';
   pages.forEach(function(pg){
     var lines=pg.text.split('\n').map(function(l){return l.trim();}).filter(Boolean);
     var tl=null,ti=-1;
-    for(var i=0;i<Math.min(lines.length,4);i++){var m=reDate.exec(lines[i]); if(m){tl=m;ti=i;break;}}
+    for(var i=0;i<Math.min(lines.length,4);i++){var m=parseTitleDate(lines[i]); if(m){tl=m;ti=i;break;}}
     var all=lines.join(' ');
-    var dv=/^(S8U|S8P)\s+Product/i.exec(all); if(dv){cur=dv[1].toUpperCase(); var pb=/Prepared by\s*:\s*([A-Za-z]+)/i.exec(all); if(pb) map[cur].owner=pb[1]; return;}
     if(!tl){
+      var dv=/^(S8U|S8P)\b/i.exec(all);
+      if(dv&&/Prepared by/i.test(all)){cur=dv[1].toUpperCase(); var pb=/Prepared by\s*:\s*([A-Za-z]+)/i.exec(all); if(pb) map[cur].owner=pb[1]; return;}
       var cv=/Prepared by\s*:\s*(.+?)\s+Date\s*:/i.exec(all);
-      if(cv){prep=cv[1]; var o=/([A-Za-z]+) for S8U/i.exec(cv[1]); var q=/([A-Za-z]+) for S8P/i.exec(cv[1]); if(o) map.S8U.owner=o[1]; if(q) map.S8P.owner=q[1]; var tt=/^(.*?)\s*(?:PU9|Prepared)/i.exec(all); if(tt&&!title) title=tt[1].trim();}
+      if(cv){
+        prep=cv[1]; var o=/([A-Za-z]+) for S8U/i.exec(cv[1]); var q=/([A-Za-z]+) for S8P/i.exec(cv[1]); if(o) map.S8U.owner=o[1]; if(q) map.S8P.owner=q[1];
+        var tt=/^(.*?)\s*(?:\d{1,2}\/\d{1,2}\/\d{4})?\s*(?:PU9|Prepared)/i.exec(all); if(tt&&!title) title=tt[1].trim();
+        if(!title){var rt=/(Report on week[A-Za-z0-9 &]*?S8[UP](?: & S8[UP])?)/i.exec(all); if(rt) title=rt[1].trim();}
+        var rd=/(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(all); if(rd&&!rdate) rdate=rd[3]+'-'+('0'+rd[1]).slice(-2)+'-'+('0'+rd[2]).slice(-2);
+      }
       return;
     }
-    var yy=tl[3].length===2?'20'+tl[3]:tl[3];
-    var date=yy+'-'+('0'+tl[1]).slice(-2)+'-'+('0'+tl[2]).slice(-2);
-    var topic=tl[4], pc=canon(topic)||cur;
-    var body=lines.filter(function(_,i){return i!==ti;}).join('\n');
-    var mi=/Issue\s*:\s*([\s\S]*?)(?=Solution\s*:|$)/i.exec(body), ms=/Solution\s*:\s*([\s\S]*?)(?=Issue\s*:|$)/i.exec(body);
-    var issue=mi?mi[1].replace(/\s+/g,' ').trim():'', sol=ms?ms[1].replace(/\s+/g,' ').trim():'', next='';
-    if(!mi&&!ms){
-      var bl=body.split('\n'), nxt=[], act=[];
-      bl.forEach(function(l){ if(/^once\b|^next\b|\bwe will\b/i.test(l)||nxt.length) nxt.push(l); else act.push(l); });
+    var topic=tl.rest, pc=canon(topic)||cur;
+    var sb=splitBody(lines.filter(function(_,i){return i!==ti;}));
+    var issue=sb.issue, sol=sb.sol, next='';
+    if(!sb.labelled){
+      var nxt=[], act=[];
+      sb.other.forEach(function(l){ if(/^once\b|^next\b|\bwe will\b/i.test(l)||nxt.length) nxt.push(l); else act.push(l); });
       sol=act.join(' ').trim(); next=nxt.join(' ').trim();
     }
     var st=issue?(sol?'solved':'open'):(next?'inprogress':'info');
-    map[pc].items.push({date:date,topic:topic.replace(/^(?:\[Update\]\s*)?(S8U|S8P)\s*/i,''),issue:issue,solution:sol,next:next,status:st,pages:String(pg.page),file:pg.file});
+    map[pc].items.push({date:tl.date,dateEnd:tl.dateEnd,topic:topic.replace(/^(?:\[Update\]\s*)?(S8U|S8P)\s*/i,''),issue:issue,solution:sol,next:next,status:st,pages:String(pg.page),file:pg.file});
   });
-  return {title:title,preparedBy:prep,products:[map.S8U,map.S8P]};
+  return {title:title,reportDate:rdate,preparedBy:prep,products:[map.S8U,map.S8P]};
 }
 
 /* ---------- summary with Claude ---------- */
@@ -1278,14 +1308,14 @@ function buildPrompt(docText,imgNote){
 'There are exactly 2 products: S8U and S8P. Do not create any other product. Part numbers such as 3US8UEB0050 are not products.',
 '',
 'JSON shape:',
-'{"title":"report title from the cover","reportDate":"YYYY-MM-DD or \\"\\"","preparedBy":"preparers from the cover","products":[{"name":"S8U","owner":"preparer of this product","summary":"1-2 sentence status for the week","items":[{"date":"YYYY-MM-DD","topic":"short topic from the slide title, without the date or product name","issue":"the problem, or \\"\\" if none","solution":"the fix, or what was done","next":"next step, or \\"\\"","status":"solved|inprogress|open|info","pages":"page number","file":"file name as given in [File: ...]"}]},{"name":"S8P","owner":"...","summary":"...","items":[]}]}',
+'{"title":"report title from the cover","reportDate":"YYYY-MM-DD or \\"\\"","preparedBy":"preparers from the cover","products":[{"name":"S8U","owner":"preparer of this product","summary":"1-2 sentence status for the week","items":[{"date":"YYYY-MM-DD","dateEnd":"YYYY-MM-DD for a date range, else \\"\\"","topic":"short topic from the slide title, without the date or product name","issue":"the problem, or \\"\\" if none","solution":"the fix, or what was done","next":"next step, or \\"\\"","status":"solved|inprogress|open|info","pages":"page number","file":"file name as given in [File: ...]"}]},{"name":"S8P","owner":"...","summary":"...","items":[]}]}',
 '',
 'Rules:',
 '- Write in English. Keep the original English wording, commands, file names, part numbers and fixture names. Do not translate. Fix only obvious grammar and keep sentences concise.',
-'- Slide titles are usually a date as MM/DD/YY followed by a product and topic, for example "10/19/26 S8U miniPC" becomes date 2026-10-19.',
-'- Cover slides and divider slides (such as "S8P Product") create no item, but tell you which product the following slides belong to. A slide whose title names no product belongs to the product of the latest divider.',
+'- Slide titles start with a date followed by a product and topic. "10/19/26 S8U miniPC" is MM/DD/YY, so date 2026-10-19. "16-17/10/26 S8P MMG Testing" is a day range DD-DD/MM/YY, so date 2026-10-16 and dateEnd 2026-10-17. If the first number is above 12 it is the day.',
+'- Cover slides and divider slides (such as "S8P Product" or just "S8P" with "Prepared by") create no item, but tell you which product the following slides belong to. A slide whose title names no product belongs to the product of the latest divider.',
 '- One slide is one item. Skip slides unrelated to S8U or S8P.',
-'- For a slide with Issue, put the issue in "issue" and the text after "Solution" in "solution". With no Issue, set issue to "" and write the work done in "solution"; plans such as "Once ... we will ..." go in "next".',
+'- For a slide with Issue, put the issue in "issue" and the text after "Solution" in "solution". A slide with only a "Solution" heading and numbered steps has issue "" and the steps in "solution", one step per line. With no Issue, set issue to "" and write the work done in "solution"; plans such as "Once ... we will ..." go in "next".',
 '- status: solved = a problem whose Solution says it was fixed or done, inprogress = work in progress or waiting on something, open = a problem with no fix yet, info = information or an email with no problem.',
 '- Use only information in the document. Do not guess.',
 imgNote||'',
