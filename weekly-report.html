@@ -153,6 +153,17 @@ div.chip-ev{cursor:default}
 .cal-key{display:flex;gap:6px 14px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-top:8px;align-items:center}
 .cal-key i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
 .flash{outline:3px solid var(--accent);outline-offset:2px;transition:outline-color .6s}
+/* saved weeks */
+.weeks{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px 16px;display:flex;flex-direction:column;gap:8px}
+.weeks-h{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.weeks-h h2{font:600 16px/1.4 var(--font-display);margin-right:auto}
+.weeks-h small{color:var(--muted);font-size:12px}
+.wk-chip{display:flex;flex-direction:column;align-items:flex-start;gap:0;padding:6px 14px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer;font:500 14px/1.3 var(--font-body);text-align:left}
+.wk-chip small{font-size:11px;color:var(--muted);font-weight:400}
+.wk-chip[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.wk-chip[aria-pressed="true"] small{color:var(--accent-ink);opacity:.85}
+.btn.danger{border-color:var(--bad);color:var(--bad)}
+.exp-sel{font:500 13px var(--font-body);color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:6px 8px}
 /* red issues */
 .cell.issue{background:var(--bad-soft);box-shadow:inset 4px 0 0 var(--bad)}
 .cell.issue .lab{color:var(--bad);font-weight:600}
@@ -684,6 +695,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   <div class="status" id="status" role="status" aria-live="polite"></div>
 
   <div id="banner"></div>
+  <section id="weeks" aria-label="Saved weeks"></section>
   <section id="overview" aria-labelledby="ov-h"></section>
   <section id="calendar" aria-label="Weekly calendar"></section>
 
@@ -691,6 +703,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     <div class="chips" id="chips" role="group" aria-label="Choose product"></div>
     <div class="export-box">
       <label class="tog" id="togBox" hidden><input type="checkbox" id="togImgs" checked> Show source slides</label>
+      <select class="exp-sel" id="expWeeks" aria-label="Weeks to export" hidden><option value="cur">This week only</option><option value="all">All saved weeks</option></select>
       <span id="scope"></span>
       <button class="btn" id="export" type="button" hidden>Export PDF</button>
     </div>
@@ -862,6 +875,84 @@ BAKED.files=[SRC_FILE]; BAKED.isSample=false;
 BAKED.notes=['Showing the report prepared from '+SRC_FILE+'. Import another PDF to summarize a different report.'];
 BAKED.thumbs={}; Object.keys(THUMBS).forEach(function(k){BAKED.thumbs[SRC_FILE+'|'+k]=THUMBS[k];});
 
+/* ---------- saved weeks (kept in this browser, IndexedDB) ---------- */
+var weeks=[], curId=null, idb=null, expScope='cur', armedWeek=false;
+var EMPTY=normalize({title:'',products:[]}); EMPTY.files=[]; EMPTY.thumbs={}; EMPTY.notes=['No saved weeks yet. Import a weekly PDF to start.'];
+function idbOpen(){return new Promise(function(res){try{var rq=indexedDB.open('s8-weekly',1);rq.onupgradeneeded=function(){rq.result.createObjectStore('weeks',{keyPath:'id'});};rq.onsuccess=function(){res(rq.result);};rq.onerror=function(){res(null);};rq.onblocked=function(){res(null);};}catch(e){res(null);}});}
+function idbTx(mode,fn){return new Promise(function(res,rej){try{var tx=idb.transaction('weeks',mode),st=tx.objectStore('weeks'),rq=fn(st);tx.oncomplete=function(){res(rq&&rq.result);};tx.onerror=tx.onabort=function(){rej(tx.error);};}catch(e){rej(e);}});}
+function byWeekDesc(a,b){return a.id<b.id?1:a.id>b.id?-1:0;}
+function weekIdOf(r){
+  var counts={}, best=null;
+  r.products.forEach(function(p){p.items.forEach(function(it){var d=parseIso(it.date); if(!d) return; var k=dIso(weekStart(d)); counts[k]=(counts[k]||0)+1;});});
+  Object.keys(counts).forEach(function(k){if(!best||counts[k]>counts[best]||(counts[k]===counts[best]&&k>best)) best=k;});
+  if(best) return best;
+  var rd=parseIso(r.reportDate); return dIso(weekStart(rd||new Date()));
+}
+function weekRange(id){
+  var d=parseIso(id); if(!d) return id; var e=new Date(d.getFullYear(),d.getMonth(),d.getDate()+6);
+  var a=d.getDate()+(d.getMonth()!==e.getMonth()?' '+MON[d.getMonth()]:'');
+  return a+'–'+e.getDate()+' '+MON[e.getMonth()]+' '+e.getFullYear();
+}
+function weekNo(id){var d=parseIso(id); return d?isoWeek(new Date(d.getFullYear(),d.getMonth(),d.getDate()+3)):0;}
+function weekTitle(id){return 'Week W'+weekNo(id)+' ('+weekRange(id)+')';}
+async function saveWeek(r){
+  var id=weekIdOf(r), replaced=weeks.some(function(w){return w.id===id;});
+  var entry={id:id,weekId:id,savedAt:Date.now(),title:r.title,reportDate:r.reportDate,preparedBy:r.preparedBy,products:r.products,files:r.files||[],thumbs:r.thumbs||{},notes:[]};
+  weeks=weeks.filter(function(w){return w.id!==id;}).concat([entry]).sort(byWeekDesc);
+  var saved=false;
+  if(idb){try{await idbTx('readwrite',function(s){return s.put(entry);});saved=true;}catch(e){saved=false;}}
+  curId=id; try{localStorage.setItem('s8-cur',id);}catch(e){}
+  return {entry:entry,replaced:replaced,saved:saved};
+}
+async function deleteWeek(id){
+  weeks=weeks.filter(function(w){return w.id!==id;});
+  if(idb){try{await idbTx('readwrite',function(s){return s.delete(id);});}catch(e){}}
+  armedWeek=false;
+  if(weeks.length){curId=weeks[0].id; report=weeks[0];}
+  else{curId=null; report=EMPTY;}
+  try{localStorage.setItem('s8-cur',curId||'');}catch(e){}
+  selected='all'; calMonth=null; render();
+}
+function selectWeek(id){
+  var w=weeks.filter(function(x){return x.id===id;})[0]; if(!w) return;
+  curId=id; report=w; selected='all'; calMonth=null; armedWeek=false;
+  try{localStorage.setItem('s8-cur',id);}catch(e){}
+  setStatus('',''); render();
+}
+function renderWeeks(){
+  var box=$('#weeks'); box.textContent='';
+  if(!weeks.length){box.hidden=true;return;}
+  box.hidden=false;
+  var head=h('div',{class:'weeks-h'},h('h2',{text:'Saved weeks'}),h('small',{text:idb?'Stored in this browser':'Not stored: browser storage is unavailable'}));
+  var cur=weeks.filter(function(w){return w.id===curId;})[0];
+  if(cur){
+    head.append(h('button',{class:'btn ghost sm'+(armedWeek?' danger':''),type:'button',onclick:function(){
+      if(armedWeek) deleteWeek(cur.id); else {armedWeek=true; render();}
+    }},armedWeek?'Click again to delete W'+weekNo(cur.id):'Delete this week'));
+  }
+  var row=h('div',{class:'chips'});
+  weeks.forEach(function(w){
+    var n=w.products.reduce(function(a,p){return a+p.items.length;},0);
+    row.append(h('button',{class:'wk-chip',type:'button','aria-pressed':String(w.id===curId),onclick:function(){selectWeek(w.id);}},
+      'W'+weekNo(w.id)+' · '+weekRange(w.id),h('small',{text:n+' topics · from '+(w.files[0]||'file')})));
+  });
+  box.append(head,row);
+}
+async function initWeeks(){
+  idb=await idbOpen();
+  var list=[];
+  if(idb){try{list=await idbTx('readonly',function(s){return s.getAll();})||[];}catch(e){list=[];}}
+  weeks=list.sort(byWeekDesc);
+  var seeded=false; try{seeded=localStorage.getItem('s8-seeded')==='1';}catch(e){}
+  if(!weeks.length&&!seeded){
+    await saveWeek(BAKED); try{localStorage.setItem('s8-seeded','1');}catch(e){}
+  }
+  var want=''; try{want=localStorage.getItem('s8-cur')||'';}catch(e){}
+  var w=weeks.filter(function(x){return x.id===want;})[0]||weeks[0];
+  if(w){curId=w.id; report=w;} else {report=EMPTY;}
+  calMonth=null; render();
+}
+
 /* ---------- state ---------- */
 var report=BAKED, selected='all', showImgs=true;
 var exportCancel=false;
@@ -900,9 +991,11 @@ function renderStats(r){
 function renderMeta(r){
   var parts=[];
   if(r.title) parts.push(h('b',{text:r.title}));
+  if(r.weekId) parts.push(' · '+weekTitle(r.weekId));
   if(r.reportDate) parts.push(' · Report date '+fmtDate(r.reportDate));
   if(r.preparedBy) parts.push(' · Prepared by '+r.preparedBy);
   if(r.files&&r.files.length) parts.push(' · From '+r.files.join(', '));
+  if(typeof parts[0]==='string') parts[0]=parts[0].replace(/^ · /,'');
   return h('p',{class:'meta'},parts);
 }
 function renderOverview(r,interactive){
@@ -1076,6 +1169,8 @@ function render(){
   var r=report, ae=document.activeElement, keep=null;
   if(ae&&ae.tagName==='TEXTAREA'&&ae.id){keep={id:ae.id,s:ae.selectionStart,e:ae.selectionEnd};}
   var banner=$('#banner'); banner.textContent='';
+  renderWeeks();
+  if(idb===null&&weeks.length) banner.append(h('div',{class:'banner',text:'Saved weeks will be lost when you close this page, because browser storage is unavailable.'}));
   (r.notes||[]).forEach(function(n){banner.append(h('div',{class:'banner',text:n}));});
   if(store.mode==='local') banner.append(h('div',{class:'banner',text:'Updates are saved in this browser only. They are not shared with other viewers.'}));
   var ov=$('#overview'); ov.textContent='';
@@ -1087,7 +1182,8 @@ function render(){
   r.products.forEach(function(p,i){chips.append(chip(p.name,i));});
   var box=$('#products'); box.textContent='';
   r.products.forEach(function(p,i){ if(selected==='all'||selected===i) box.append(renderProduct(r,p,false)); });
-  $('#scope').textContent='Export: '+(selected==='all'?'S8U and S8P':r.products[selected].name);
+  $('#expWeeks').hidden=!(weeks.length>1); if(weeks.length<=1) expScope='cur'; $('#expWeeks').value=expScope;
+  $('#scope').textContent='Export: '+(expScope==='all'?'all '+weeks.length+' weeks':(curId?'W'+weekNo(curId):'this report'))+' · '+(selected==='all'?'S8U and S8P':r.products[selected].name);
   $('#togBox').hidden=!(r.thumbs&&Object.keys(r.thumbs).length);
   $('#export').hidden=!(window.jspdf&&window.html2canvas);
   if(keep){var t=document.getElementById(keep.id); if(t){t.focus(); try{t.setSelectionRange(keep.s,keep.e);}catch(e){}}}
@@ -1298,8 +1394,9 @@ async function runSummary(){
   if(!n){setStatus('err','No S8U or S8P topics found. Check that slide titles name the product.');return;}
   setStatus('busy','Preparing source slides…');
   r.thumbs=await buildThumbs(r);
-  report=r; selected='all'; calMonth=null; render();
-  setStatus('ok','Summary ready: '+n+' topics (S8U '+r.products[0].items.length+', S8P '+r.products[1].items.length+')');
+  var sv=await saveWeek(r);
+  report=Object.assign({},sv.entry,{notes:r.notes}); selected='all'; calMonth=null; armedWeek=false; render();
+  setStatus('ok','Summary ready: '+n+' topics (S8U '+r.products[0].items.length+', S8P '+r.products[1].items.length+'). '+(sv.saved?(sv.replaced?'Replaced the saved ':'Saved as ')+'W'+weekNo(sv.entry.id)+' ('+weekRange(sv.entry.id)+').':'Could not save this week in the browser.'));
   var t=$('#overview'); if(t&&t.scrollIntoView) t.scrollIntoView({behavior:'smooth',block:'start'});
 }
 
@@ -1310,11 +1407,16 @@ async function exportPdf(){
   var overlay=$('#busy'); $('#busyText').textContent='Preparing PDF…'; overlay.hidden=false;
   var xr=h('div',{class:'export'}); document.body.append(xr);
   try{
-    var sel=selected==='all'?report.products:[report.products[selected]];
-    var blocks=[];
-    var headBlock=h('section',{class:'x-block'},renderHead({title:report.title,reportDate:report.reportDate,preparedBy:report.preparedBy,files:report.files,products:sel}));
-    xr.append(headBlock); blocks.push(headBlock);
-    sel.forEach(function(p){var b=h('section',{class:'x-block'},renderProduct(report,p,true)); xr.append(b); blocks.push(b);});
+    var reps=(expScope==='all'&&weeks.length>1)?weeks.slice().sort(function(a,b){return a.id<b.id?-1:1;}):[report];
+    var blocks=[], savedMonth=calMonth;
+    reps.forEach(function(rp){
+      var sel=selected==='all'?rp.products:[rp.products[selected]];
+      calMonth=null;
+      var headBlock=h('section',{class:'x-block'},renderHead({title:rp.title,weekId:rp.id||rp.weekId,reportDate:rp.reportDate,preparedBy:rp.preparedBy,files:rp.files,products:sel}));
+      xr.append(headBlock); blocks.push(headBlock);
+      sel.forEach(function(p){var b=h('section',{class:'x-block'},renderProduct(rp,p,true)); xr.append(b); blocks.push(b);});
+    });
+    calMonth=savedMonth;
     if(document.fonts&&document.fonts.ready) await withTimeout(document.fonts.ready,2500);
     var imgEls=Array.prototype.slice.call(xr.querySelectorAll('img'));
     await withTimeout(Promise.all(imgEls.map(function(i){return i.decode?i.decode().catch(function(){}):Promise.resolve();})),4000);
@@ -1352,7 +1454,8 @@ async function exportPdf(){
     var buf=pdf.output('arraybuffer');
     overlay.hidden=true;
     var tag=selected==='all'?'S8U-S8P':report.products[selected].name;
-    var fname='Report-'+tag+'-'+isoDay()+'.pdf';
+    var wtag=(expScope==='all'&&weeks.length>1)?'all-weeks':(curId?'W'+weekNo(curId):'report');
+    var fname='Report-'+wtag+'-'+tag+'-'+isoDay()+'.pdf';
     if(downloads) await downloads.save({filename:fname,data:buf});
     else{
       var url=URL.createObjectURL(new Blob([buf],{type:'application/pdf'}));
@@ -1378,6 +1481,7 @@ fileInput.addEventListener('change',function(){if(fileInput.files&&fileInput.fil
 ['dragleave','drop'].forEach(function(t){drop.addEventListener(t,function(e){e.preventDefault();drop.classList.remove('over');});});
 drop.addEventListener('drop',function(e){if(e.dataTransfer&&e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);});
 $('#export').addEventListener('click',exportPdf);
+$('#expWeeks').addEventListener('change',function(e){expScope=e.target.value;render();});
 $('#busyCancel').addEventListener('click',function(){exportCancel=true;$('#busy').hidden=true;});
 $('#togImgs').addEventListener('change',function(e){showImgs=e.target.checked;render();});
 render();
@@ -1387,6 +1491,7 @@ render();
     sampleFn=await window.claude.use('sample');
     downloads=await window.claude.use('downloads');
   }}catch(e){}
+  await initWeeks();
   await initStore();
 })();
 })();
